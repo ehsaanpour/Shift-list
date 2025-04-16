@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Generator - Shift Scheduler</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-calendar-alt me-2"></i>Shift Scheduler
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">
+                            <i class="fas fa-home me-1"></i> Home
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/excel-generator">
+                            <i class="fas fa-file-excel me-1"></i> Excel Generator
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container py-4">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="fas fa-file-excel me-2"></i>Generate Excel Files</h5>
+            </div>
+            <div class="card-body">
+                <p class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    This page allows you to generate Excel files from your saved schedule.
+                    Make sure you have saved your schedule before generating Excel files.
+                </p>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="excelMonthSelect">Month:</label>
+                            <select id="excelMonthSelect" class="form-select">
+                                <option value="1">January</option>
+                                <option value="2">February</option>
+                                <option value="3">March</option>
+                                <option value="4">April</option>
+                                <option value="5">May</option>
+                                <option value="6">June</option>
+                                <option value="7">July</option>
+                                <option value="8">August</option>
+                                <option value="9">September</option>
+                                <option value="10">October</option>
+                                <option value="11">November</option>
+                                <option value="12">December</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="excelYearSelect">Year:</label>
+                            <select id="excelYearSelect" class="form-select">
+                                <!-- Will be populated by JavaScript -->
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="excelGenerateBtn" class="btn btn-success">
+                    <i class="fas fa-file-excel me-2"></i>Generate Excel Files
+                </button>
+            </div>
+        </div>
+        
+        <div id="alertContainer"></div>
+    </main>
+
+    <!-- Excel Generated Modal -->
+    <div class="modal fade" id="excelGeneratedModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">
+                        <i class="fas fa-check-circle me-2"></i>Excel Files Generated
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Your Excel files have been generated successfully! You can download them below:</p>
+                    <ul id="downloadList" class="list-group mt-3">
+                        <!-- Download links will appear here -->
+                    </ul>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-light py-3 mt-5">
+        <div class="container text-center text-muted">
+            <p>Shift Scheduler &copy; 2023</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize year dropdown
+            const yearSelect = document.getElementById('excelYearSelect');
+            const currentYear = new Date().getFullYear();
+            
+            for (let year = currentYear - 5; year <= currentYear + 5; year++) {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = year;
+                if (year === currentYear) {
+                    option.selected = true;
+                }
+                yearSelect.appendChild(option);
+            }
+            
+            // Set current month
+            const currentMonth = new Date().getMonth() + 1; // JavaScript months are 0-indexed
+            document.getElementById('excelMonthSelect').value = currentMonth;
+            
+            // Add event listener to the generate button
+            const generateBtn = document.getElementById('excelGenerateBtn');
+            generateBtn.addEventListener('click', generateExcelFiles);
+            
+            // Function to generate Excel files
+            function generateExcelFiles() {
+                const monthSelect = document.getElementById('excelMonthSelect');
+                const yearSelect = document.getElementById('excelYearSelect');
+                
+                const month = parseInt(monthSelect.value);
+                const year = parseInt(yearSelect.value);
+                
+                console.log(`Generating Excel files for ${month}/${year}`);
+                
+                // Show loading message
+                showAlert('Generating Excel files...', 'info');
+                
+                // Make API call
+                fetch('/api/generate_excel', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        year: year,
+                        month: month
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to generate Excel files');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        const downloadList = document.getElementById('downloadList');
+                        downloadList.innerHTML = '';
+                        
+                        data.files.forEach(file => {
+                            const li = document.createElement('li');
+                            li.classList.add('list-group-item', 'd-flex', 'justify-content-between', 'align-items-center');
+                            
+                            const fileName = document.createElement('span');
+                            fileName.textContent = file;
+                            
+                            const downloadLink = document.createElement('a');
+                            downloadLink.href = `/api/download/${file}`;
+                            downloadLink.classList.add('btn', 'btn-sm', 'btn-outline-primary');
+                            downloadLink.innerHTML = '<i class="fas fa-download me-1"></i> Download';
+                            downloadLink.download = file;
+                            
+                            li.appendChild(fileName);
+                            li.appendChild(downloadLink);
+                            downloadList.appendChild(li);
+                        });
+                        
+                        // Show modal
+                        const modal = new bootstrap.Modal(document.getElementById('excelGeneratedModal'));
+                        modal.show();
+                        
+                        // Remove any previous alerts
+                        document.getElementById('alertContainer').innerHTML = '';
+                    } else {
+                        showAlert('Failed to generate Excel files. Please make sure you have saved the schedule.', 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error generating Excel files:', error);
+                    showAlert('Failed to generate Excel files. Please make sure you have saved the schedule.', 'danger');
+                });
+            }
+            
+            // Function to show alert message
+            function showAlert(message, type = 'info') {
+                const alertContainer = document.getElementById('alertContainer');
+                
+                // Create alert element
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+                alertDiv.setAttribute('role', 'alert');
+                alertDiv.innerHTML = `
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                `;
+                
+                // Add to page
+                alertContainer.innerHTML = '';
+                alertContainer.appendChild(alertDiv);
+                
+                // Auto dismiss after 5 seconds
+                setTimeout(() => {
+                    const bsAlert = new bootstrap.Alert(alertDiv);
+                    bsAlert.close();
+                }, 5000);
+            }
+        });
+    </script>
+</body>
+</html> 
