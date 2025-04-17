@@ -33,6 +33,10 @@ function initYearDropdown() {
     }
 }
 
+// Variables to store pattern data
+let currentPattern = {};
+let currentPatternWorkplace = '';
+
 // Set up event listeners for interactive elements
 function setupEventListeners() {
     // Save engineer button
@@ -62,18 +66,48 @@ function setupEventListeners() {
     // Auto-Assign Engineers button
     const autoAssignBtn = document.getElementById('btnAutoAssign');
     if (autoAssignBtn) {
-        // Remove any existing event listeners (to prevent duplicates)
-        autoAssignBtn.replaceWith(autoAssignBtn.cloneNode(true));
-        
-        // Get the fresh element and add the event listener
-        const newAutoAssignBtn = document.getElementById('btnAutoAssign');
-        if (newAutoAssignBtn) {
-            newAutoAssignBtn.addEventListener('click', function(event) {
-                event.preventDefault();
-                autoAssignEngineers();
-            });
-            console.log('Auto-assign button event listener attached');
-        }
+        autoAssignBtn.addEventListener('click', autoAssignEngineers);
+    }
+    
+    // Import Pattern buttons
+    const importPatternBtns = document.querySelectorAll('.import-pattern-btn');
+    importPatternBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const workplace = this.dataset.workplace;
+            openImportPatternModal(workplace);
+        });
+    });
+    
+    // Pattern file input change
+    const patternFileInput = document.getElementById('patternFile');
+    if (patternFileInput) {
+        patternFileInput.addEventListener('change', function() {
+            const previewBtn = document.getElementById('btnPreviewPattern');
+            const applyBtn = document.getElementById('btnApplyPattern');
+            
+            if (this.files.length > 0) {
+                previewBtn.disabled = false;
+            } else {
+                previewBtn.disabled = true;
+                applyBtn.disabled = true;
+                
+                // Hide preview
+                const previewSection = document.getElementById('patternPreview');
+                previewSection.classList.add('d-none');
+            }
+        });
+    }
+    
+    // Preview Pattern button
+    const previewPatternBtn = document.getElementById('btnPreviewPattern');
+    if (previewPatternBtn) {
+        previewPatternBtn.addEventListener('click', previewPattern);
+    }
+    
+    // Apply Pattern button
+    const applyPatternBtn = document.getElementById('btnApplyPattern');
+    if (applyPatternBtn) {
+        applyPatternBtn.addEventListener('click', applyPattern);
     }
     
     // Month and year select
@@ -963,7 +997,246 @@ function clearAllShifts() {
     }
 }
 
+// Open the Import Pattern modal
+function openImportPatternModal(workplace) {
+    // Store the current workplace
+    currentPatternWorkplace = workplace;
+    
+    // Update modal title
+    const workplaceNameElement = document.getElementById('patternWorkplaceName');
+    if (workplaceNameElement) {
+        workplaceNameElement.textContent = workplace;
+    }
+    
+    // Reset form
+    const patternForm = document.getElementById('patternUploadForm');
+    if (patternForm) {
+        patternForm.reset();
+    }
+    
+    // Reset buttons
+    const previewBtn = document.getElementById('btnPreviewPattern');
+    const applyBtn = document.getElementById('btnApplyPattern');
+    if (previewBtn) previewBtn.disabled = true;
+    if (applyBtn) applyBtn.disabled = true;
+    
+    // Hide preview
+    const previewSection = document.getElementById('patternPreview');
+    if (previewSection) {
+        previewSection.classList.add('d-none');
+    }
+    
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('importPatternModal'));
+    modal.show();
+}
+
+// Preview the pattern from uploaded Excel file
+function previewPattern() {
+    const fileInput = document.getElementById('patternFile');
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        showAlert('Please select an Excel file first.', 'warning');
+        return;
+    }
+    
+    // Show loading state
+    const previewBtn = document.getElementById('btnPreviewPattern');
+    const originalText = previewBtn.innerHTML;
+    previewBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+    previewBtn.disabled = true;
+    
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    
+    fetch('/api/pattern/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Error uploading file. Server returned ' + response.status);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.status === 'success') {
+            // Store the pattern
+            currentPattern = data.pattern;
+            
+            // Generate preview
+            generatePatternPreview(data.pattern);
+            
+            // Enable apply button
+            const applyBtn = document.getElementById('btnApplyPattern');
+            applyBtn.disabled = false;
+        } else {
+            throw new Error('Failed to process pattern file');
+        }
+    })
+    .catch(error => {
+        console.error('Error processing pattern file:', error);
+        showAlert('Failed to process pattern file: ' + error.message, 'danger');
+    })
+    .finally(() => {
+        // Reset button state
+        previewBtn.innerHTML = originalText;
+        previewBtn.disabled = false;
+    });
+}
+
+// Generate a preview of the pattern data
+function generatePatternPreview(pattern) {
+    const previewSection = document.getElementById('patternPreview');
+    const previewTable = document.getElementById('patternPreviewTable');
+    
+    if (!previewSection || !previewTable) return;
+    
+    // Clear previous preview
+    const tbody = previewTable.querySelector('tbody');
+    tbody.innerHTML = '';
+    
+    // Get current month and year to display correct day labels
+    const month = parseInt(document.getElementById('monthSelect').value);
+    const year = parseInt(document.getElementById('yearSelect').value);
+    
+    // Create rows for each day
+    Object.keys(pattern).sort((a, b) => parseInt(a) - parseInt(b)).forEach(day => {
+        const date = new Date(year, month - 1, parseInt(day));
+        const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'short' });
+        const dayLabel = `${day} - ${dayOfWeek}`;
+        
+        const row = document.createElement('tr');
+        
+        // Day column
+        const dayCell = document.createElement('td');
+        dayCell.textContent = dayLabel;
+        row.appendChild(dayCell);
+        
+        // Shift columns
+        for (let shift = 1; shift <= 3; shift++) {
+            const shiftKey = `shift${shift}`;
+            const cell = document.createElement('td');
+            cell.textContent = pattern[day][shiftKey] || '—';
+            row.appendChild(cell);
+        }
+        
+        tbody.appendChild(row);
+    });
+    
+    // Show the preview section
+    previewSection.classList.remove('d-none');
+}
+
+// Apply the pattern to the schedule
+function applyPattern() {
+    if (!currentPattern || !currentPatternWorkplace) {
+        showAlert('No pattern data available to apply.', 'warning');
+        return;
+    }
+    
+    // Get checkbox values
+    const overrideExisting = document.getElementById('overrideExisting').checked;
+    const respectLimitations = document.getElementById('respectLimitations').checked;
+    
+    // Show loading state
+    const applyBtn = document.getElementById('btnApplyPattern');
+    const originalText = applyBtn.innerHTML;
+    applyBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Applying...';
+    applyBtn.disabled = true;
+    
+    // Find the workplace tab content
+    const workplaceId = currentPatternWorkplace.replace(/\s+/g, '-').toLowerCase();
+    const workplaceElement = document.getElementById(`schedule-${workplaceId}`);
+    
+    if (!workplaceElement) {
+        showAlert(`Could not find schedule for ${currentPatternWorkplace}`, 'danger');
+        applyBtn.innerHTML = originalText;
+        applyBtn.disabled = false;
+        return;
+    }
+    
+    // Count assignments
+    let appliedCount = 0;
+    let skippedDueToLimitations = 0;
+    let skippedDueToExisting = 0;
+    
+    // For each day in the pattern
+    Object.keys(currentPattern).forEach(day => {
+        // For each shift in the day
+        Object.keys(currentPattern[day]).forEach(shift => {
+            const engineerName = currentPattern[day][shift];
+            
+            // Skip if no engineer assigned in pattern
+            if (!engineerName) return;
+            
+            // Find the select element for this day and shift
+            const selectElem = workplaceElement.querySelector(
+                `select[data-day="${day}"][data-shift="${shift}"][data-workplace="${currentPatternWorkplace}"]`
+            );
+            
+            if (!selectElem) return;
+            
+            // Check if there's already an assignment
+            if (selectElem.value && !overrideExisting) {
+                skippedDueToExisting++;
+                return;
+            }
+            
+            // Find engineer in options
+            let engineerOption = null;
+            for (let i = 0; i < selectElem.options.length; i++) {
+                if (selectElem.options[i].textContent === engineerName) {
+                    engineerOption = selectElem.options[i];
+                    break;
+                }
+            }
+            
+            // Skip if engineer not found
+            if (!engineerOption) return;
+            
+            // Check limitations if required
+            if (respectLimitations) {
+                // Find the engineer object
+                const engineer = window.engineers.find(eng => eng.name === engineerName);
+                
+                // Skip if engineer not found
+                if (!engineer) return;
+                
+                // Check if the engineer has limitations for this day and shift
+                if (engineer.limitations && 
+                    (engineer.limitations[day] || engineer.limitations[`${day}`]) &&
+                    ((engineer.limitations[day] && engineer.limitations[day].includes(shift)) ||
+                     (engineer.limitations[`${day}`] && engineer.limitations[`${day}`].includes(shift)))) {
+                    skippedDueToLimitations++;
+                    return;
+                }
+            }
+            
+            // Apply the assignment
+            selectElem.value = engineerOption.value;
+            appliedCount++;
+        });
+    });
+    
+    // Show results
+    const message = `Applied ${appliedCount} assignments from the pattern.` +
+        (skippedDueToLimitations > 0 ? ` Skipped ${skippedDueToLimitations} due to limitations.` : '') +
+        (skippedDueToExisting > 0 ? ` Skipped ${skippedDueToExisting} due to existing assignments.` : '');
+    
+    showAlert(message, 'success');
+    
+    // Close modal
+    bootstrap.Modal.getInstance(document.getElementById('importPatternModal')).hide();
+    
+    // Reset button state
+    applyBtn.innerHTML = originalText;
+    applyBtn.disabled = false;
+}
+
 // Make functions available globally
 window.autoAssignEngineers = autoAssignEngineers;
 window.saveSchedule = saveSchedule;
 window.clearAllShifts = clearAllShifts;
+window.openImportPatternModal = openImportPatternModal;
+window.previewPattern = previewPattern;
+window.applyPattern = applyPattern;

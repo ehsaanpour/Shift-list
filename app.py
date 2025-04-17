@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, File, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -14,6 +14,8 @@ import openpyxl
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
 from openpyxl.utils import get_column_letter
 import uvicorn
+import shutil
+import tempfile
 
 # Create FastAPI app
 app = FastAPI(title="Shift Scheduler")
@@ -75,6 +77,10 @@ class ScheduleRequest(BaseModel):
 class ExcelRequest(BaseModel):
     year: int
     month: int
+
+class PatternUploadResponse(BaseModel):
+    status: str
+    pattern: Dict[str, Dict[str, str]] = {}
 
 # Helper functions
 def load_engineers():
@@ -308,6 +314,49 @@ async def download_file(filename: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path=file_path, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.post("/api/pattern/upload")
+async def upload_pattern(file: UploadFile = File(...)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Invalid file format. Only Excel files (.xlsx, .xls) are supported.")
+    
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        # Save the uploaded file
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+    
+    try:
+        # Open the Excel file
+        workbook = openpyxl.load_workbook(tmp_path, data_only=True)
+        
+        # Assume the first sheet is the pattern sheet
+        sheet = workbook.active
+        
+        # Parse the pattern (expecting days as rows and shifts as columns)
+        pattern = {}
+        
+        # Determine max rows to read (30 or 31 days)
+        max_rows = min(sheet.max_row, 31)
+        
+        # Read each day (row) and the 3 shifts (columns)
+        for day in range(1, max_rows + 1):
+            pattern[str(day)] = {}
+            
+            # Read up to 3 shifts (columns)
+            for shift in range(1, min(4, sheet.max_column + 1)):
+                cell_value = sheet.cell(row=day, column=shift).value
+                
+                # Only include non-empty cells
+                if cell_value:
+                    pattern[str(day)][f"shift{shift}"] = str(cell_value).strip()
+        
+        return PatternUploadResponse(status="success", pattern=pattern)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing Excel file: {str(e)}")
+    finally:
+        # Clean up the temporary file
+        os.remove(tmp_path)
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
