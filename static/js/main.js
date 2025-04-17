@@ -53,10 +53,27 @@ function setupEventListeners() {
         generateBtn.addEventListener('click', generateExcel);
     }
     
+    // Clear All Shifts button
+    const clearShiftsBtn = document.getElementById('btnClearShifts');
+    if (clearShiftsBtn) {
+        clearShiftsBtn.addEventListener('click', clearAllShifts);
+    }
+    
     // Auto-Assign Engineers button
     const autoAssignBtn = document.getElementById('btnAutoAssign');
     if (autoAssignBtn) {
-        autoAssignBtn.addEventListener('click', autoAssignEngineers);
+        // Remove any existing event listeners (to prevent duplicates)
+        autoAssignBtn.replaceWith(autoAssignBtn.cloneNode(true));
+        
+        // Get the fresh element and add the event listener
+        const newAutoAssignBtn = document.getElementById('btnAutoAssign');
+        if (newAutoAssignBtn) {
+            newAutoAssignBtn.addEventListener('click', function(event) {
+                event.preventDefault();
+                autoAssignEngineers();
+            });
+            console.log('Auto-assign button event listener attached');
+        }
     }
     
     // Month and year select
@@ -67,6 +84,12 @@ function setupEventListeners() {
         monthSelect.addEventListener('change', generateCalendars);
         yearSelect.addEventListener('change', generateCalendars);
     }
+    
+    // Save limitations button
+    const saveLimitationsBtn = document.getElementById('btnSaveLimitations');
+    if (saveLimitationsBtn) {
+        saveLimitationsBtn.addEventListener('click', window.saveLimitations);
+    }
 }
 
 // Load engineers from API
@@ -74,7 +97,24 @@ function loadEngineers() {
     fetch('/api/engineers')
         .then(response => response.json())
         .then(data => {
-            window.engineers = data || [];
+            // Ensure each engineer has a limitations property
+            window.engineers = data.map(eng => {
+                // Ensure limitations are properly structured with string keys
+                const formattedLimitations = {};
+                if (eng.limitations) {
+                    Object.keys(eng.limitations).forEach(day => {
+                        // Ensure day is stored as string
+                        formattedLimitations[String(day)] = eng.limitations[day];
+                    });
+                }
+                
+                return {
+                    ...eng,
+                    limitations: formattedLimitations
+                };
+            });
+            
+            console.log('Loaded engineers with formatted limitations:', window.engineers);
             updateEngineersList();
             generateCalendars();
         })
@@ -187,6 +227,15 @@ function saveEngineer() {
         return;
     }
     
+    // Find existing engineer to preserve limitations
+    let existingLimitations = {};
+    if (window.engineers) {
+        const existingEngineer = window.engineers.find(eng => eng.name === name);
+        if (existingEngineer && existingEngineer.limitations) {
+            existingLimitations = existingEngineer.limitations;
+        }
+    }
+    
     fetch('/api/engineers', {
         method: 'POST',
         headers: {
@@ -194,7 +243,8 @@ function saveEngineer() {
         },
         body: JSON.stringify({
             name,
-            workplaces
+            workplaces,
+            limitations: existingLimitations
         })
     })
     .then(response => response.json())
@@ -562,9 +612,12 @@ function autoAssignEngineers() {
     }
     
     // Show confirmation dialog
-    if (!confirm('This will automatically assign engineers to all empty shifts based on their workplace eligibility. Continue?')) {
+    if (!confirm('This will automatically assign engineers to all empty shifts based on their workplace eligibility and limitations. Continue?')) {
         return;
     }
+    
+    // Debug engineers data
+    console.log('Engineers before auto-assignment:', JSON.stringify(window.engineers));
     
     // Show loading indicator
     const loadingDiv = document.createElement('div');
@@ -590,6 +643,8 @@ function autoAssignEngineers() {
         engineerAssignments[eng.name] = 0;
     });
     
+    console.log("Starting auto-assignment with engineers:", window.engineers);
+    
     // Prepare workplace elements and data for batch processing
     const workplaceElements = Array.from(document.querySelectorAll('[id^="schedule-"]'));
     const workplaceData = workplaceElements.map(workplaceElem => {
@@ -600,8 +655,10 @@ function autoAssignEngineers() {
         
         // Filter engineers who can work in this workplace
         const eligibleEngineers = window.engineers.filter(eng => 
-            eng.workplaces.includes(workplaceName)
+            eng.workplaces && eng.workplaces.includes(workplaceName)
         );
+        
+        console.log(`Workplace: ${workplaceName}, Eligible Engineers: ${eligibleEngineers.map(e => e.name).join(', ')}`);
         
         return {
             element: workplaceElem,
@@ -614,6 +671,7 @@ function autoAssignEngineers() {
     const batchSize = 5; // Process 5 days at a time
     let currentWorkplaceIndex = 0;
     let currentDay = 1;
+    let totalAssignments = 0;
     
     // Process in batches
     function processBatch() {
@@ -622,12 +680,15 @@ function autoAssignEngineers() {
             // Remove loading indicator
             document.body.removeChild(loadingDiv);
             
+            console.log(`Auto-assignment complete. Total assignments: ${totalAssignments}`);
+            
             // Show results
             showAssignmentResults(engineerAssignments);
             return;
         }
         
         const workplace = workplaceData[currentWorkplaceIndex];
+        console.log(`Processing workplace: ${workplace.name}, days ${currentDay} to ${Math.min(currentDay + batchSize - 1, daysInMonth)}`);
         
         // Process a batch of days
         const startDay = currentDay;
@@ -645,8 +706,54 @@ function autoAssignEngineers() {
                     continue;
                 }
                 
-                // Sort eligible engineers by number of assignments (ascending)
-                const sortedEngineers = [...workplace.eligible].sort((a, b) => {
+                const dayStr = String(day);
+                const shiftKey = `shift${shift}`;
+                
+                // Filter eligible engineers considering their limitations
+                const availableEngineers = workplace.eligible.filter(eng => {
+                    // Debug individual engineer limitations
+                    console.log(`Checking engineer ${eng.name} for ${workplace.name}, day ${day}, ${shiftKey}`);
+                    console.log(`Engineer limitations:`, eng.limitations);
+                    
+                    // Check if the engineer has limitations for this day and shift
+                    let hasLimitation = false;
+                    
+                    if (eng.limitations) {
+                        // Check limitations with day as string (e.g., "1", "2", etc.)
+                        if (eng.limitations[dayStr] && 
+                            Array.isArray(eng.limitations[dayStr]) && 
+                            eng.limitations[dayStr].includes(shiftKey)) {
+                            hasLimitation = true;
+                        }
+                        
+                        // Also check with day as number (for backward compatibility)
+                        if (eng.limitations[day] && 
+                            Array.isArray(eng.limitations[day]) && 
+                            eng.limitations[day].includes(shiftKey)) {
+                            hasLimitation = true;
+                        }
+                    }
+                    
+                    if (hasLimitation) {
+                        console.log(`Engineer ${eng.name} has limitation for day ${day}, ${shiftKey}`);
+                    } else {
+                        console.log(`Engineer ${eng.name} is available for day ${day}, ${shiftKey}`);
+                    }
+                    
+                    return !hasLimitation;
+                });
+                
+                console.log(`Available engineers for ${workplace.name}, day ${day}, ${shiftKey}:`, 
+                    availableEngineers.map(e => e.name).join(', '));
+                
+                // If no available engineers after filtering by limitations, skip
+                if (availableEngineers.length === 0) {
+                    console.log(`No available engineers for ${workplace.name}, day ${day}, ${shiftKey}`);
+                    continue;
+                }
+                
+                // Sort available engineers by number of assignments (ascending)
+                const sortedEngineers = [...availableEngineers].sort((a, b) => {
                     return engineerAssignments[a.name] - engineerAssignments[b.name];
                 });
                 
@@ -655,6 +762,8 @@ function autoAssignEngineers() {
                     const assignedEngineer = sortedEngineers[0];
                     selectElem.value = assignedEngineer.name;
                     engineerAssignments[assignedEngineer.name]++;
+                    totalAssignments++;
+                    console.log(`Assigned ${assignedEngineer.name} to ${workplace.name}, day ${day}, ${shiftKey}`);
                 }
             }
         }
@@ -676,66 +785,185 @@ function autoAssignEngineers() {
 
 // Show assignment results in modal
 function showAssignmentResults(engineerAssignments) {
-    // Show success message
-    showAlert('Engineers have been automatically assigned to shifts!', 'success');
+    // Verify we have assignment data to display
+    console.log("Engineer Assignments:", engineerAssignments);
+    
+    // Calculate total assignments
+    const totalAssignments = Object.values(engineerAssignments).reduce((sum, count) => sum + count, 0);
+    
+    // Filter only engineers that were assigned (count > 0)
+    const assignedEngineers = Object.entries(engineerAssignments)
+        .filter(([_, count]) => count > 0);
+    
+    console.log("Filtered Assigned Engineers:", assignedEngineers);
+    console.log("Total Assignments:", totalAssignments);
+    
+    // Show success message with count
+    if (totalAssignments > 0) {
+        showAlert(`Successfully assigned ${totalAssignments} shifts to ${assignedEngineers.length} engineers!`, 'success');
+    } else {
+        showAlert('No shifts could be assigned. This may be due to limitations or workplace eligibility issues.', 'warning');
+    }
+    
+    // Create table rows for each engineer
+    const tableRows = assignedEngineers
+        .sort((a, b) => b[1] - a[1]) // Sort by count (highest first)
+        .map(([name, count]) => {
+            return `
+                <tr>
+                    <td>${name}</td>
+                    <td>${count}</td>
+                </tr>
+            `;
+        }).join('');
+    
+    // Create table with assignment data
+    const tableContent = assignedEngineers.length > 0 
+        ? `
+            <div class="table-responsive">
+                <table class="table table-sm table-striped">
+                    <thead>
+                        <tr>
+                            <th>Engineer</th>
+                            <th>Assigned Shifts</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows}
+                    </tbody>
+                </table>
+            </div>
+        `
+        : `<div class="alert alert-warning">
+            <p><strong>No shifts were assigned.</strong></p>
+            <p>Possible reasons:</p>
+            <ul>
+                <li>Engineers have too many limitations set for this month</li>
+                <li>Engineers are not assigned to the required workplaces</li>
+                <li>All shifts are already filled</li>
+            </ul>
+            <p>Try adjusting engineer limitations or workplace assignments and try again.</p>
+          </div>`;
     
     // Show detailed modal with assignments
     const summaryContent = `
         <h5>Assignment Summary</h5>
-        <p>Engineers have been assigned to shifts based on their workplace eligibility and to balance workload.</p>
-        <div class="table-responsive">
-            <table class="table table-sm table-striped">
-                <thead>
-                    <tr>
-                        <th>Engineer</th>
-                        <th>Assigned Shifts</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${Object.entries(engineerAssignments)
-                        .filter(([_, count]) => count > 0)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([name, count]) => `
-                            <tr>
-                                <td>${name}</td>
-                                <td>${count}</td>
-                            </tr>
-                        `).join('')}
-                </tbody>
-            </table>
+        <p>Engineers have been assigned to shifts based on their workplace eligibility and limitations.</p>
+        ${tableContent}
+        ${totalAssignments > 0 ? `
+        <div class="alert alert-warning mt-3">
+            <i class="fas fa-exclamation-triangle me-2"></i> Remember to save the schedule to persist these assignments!
         </div>
+        ` : ''}
     `;
     
-    // Create a modal to display assignment summary
-    const modalDiv = document.createElement('div');
-    modalDiv.className = 'modal fade';
-    modalDiv.id = 'assignmentSummaryModal';
-    modalDiv.tabIndex = -1;
-    modalDiv.innerHTML = `
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-warning text-dark">
-                    <h5 class="modal-title"><i class="fas fa-magic me-2"></i>Auto-Assignment Complete</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    ${summaryContent}
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+    // Update modal content or create new modal
+    const existingModal = document.getElementById('assignmentSummaryModal');
+    if (existingModal) {
+        // Update existing modal
+        const modalBody = existingModal.querySelector('.modal-body');
+        if (modalBody) {
+            modalBody.innerHTML = summaryContent;
+        }
+        
+        // Update footer to include Clear All button
+        const modalFooter = existingModal.querySelector('.modal-footer');
+        if (modalFooter) {
+            modalFooter.innerHTML = `
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-danger" onclick="clearAllShifts()">
+                    <i class="fas fa-eraser me-1"></i> Clear All
+                </button>
+                <button type="button" class="btn btn-primary" onclick="saveSchedule()">
+                    <i class="fas fa-save me-1"></i> Save Schedule
+                </button>
+            `;
+        }
+        
+        // Show the modal
+        const modal = new bootstrap.Modal(existingModal);
+        modal.show();
+    } else {
+        // Create a new modal
+        const modalDiv = document.createElement('div');
+        modalDiv.className = 'modal fade';
+        modalDiv.id = 'assignmentSummaryModal';
+        modalDiv.tabIndex = -1;
+        modalDiv.innerHTML = `
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning text-dark">
+                        <h5 class="modal-title"><i class="fas fa-magic me-2"></i>Auto-Assignment Complete</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        ${summaryContent}
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="button" class="btn btn-danger" onclick="clearAllShifts()">
+                            <i class="fas fa-eraser me-1"></i> Clear All
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="saveSchedule()">
+                            <i class="fas fa-save me-1"></i> Save Schedule
+                        </button>
+                    </div>
                 </div>
             </div>
-        </div>
-    `;
-    
-    // Append to body if it doesn't exist already
-    if (!document.getElementById('assignmentSummaryModal')) {
+        `;
+        
         document.body.appendChild(modalDiv);
-    } else {
-        document.getElementById('assignmentSummaryModal').innerHTML = modalDiv.innerHTML;
+        
+        // Show the modal
+        const modal = new bootstrap.Modal(modalDiv);
+        modal.show();
+    }
+}
+
+// Function to clear all shifts in the schedule
+function clearAllShifts() {
+    // Show confirmation dialog
+    if (!confirm('Are you sure you want to clear all shifts? This will reset all assignments.')) {
+        return;
     }
     
-    // Show the modal
-    const modal = new bootstrap.Modal(document.getElementById('assignmentSummaryModal'));
-    modal.show();
+    // Get all shift selector elements
+    const shiftSelectors = document.querySelectorAll('.engineer-select');
+    
+    // Count how many shifts are currently assigned
+    let assignedShiftsCount = 0;
+    shiftSelectors.forEach(select => {
+        if (select.value !== '') {
+            assignedShiftsCount++;
+        }
+    });
+    
+    // If no shifts are assigned, show a message
+    if (assignedShiftsCount === 0) {
+        showAlert('No shifts are currently assigned.', 'info');
+        return;
+    }
+    
+    // Reset all shift selectors to empty
+    shiftSelectors.forEach(select => {
+        select.value = '';
+    });
+    
+    // Show success message
+    showAlert(`Successfully cleared ${assignedShiftsCount} shift assignments. Don't forget to save your changes!`, 'success');
+    
+    // Reset the current schedule in memory
+    const monthSelect = document.getElementById('monthSelect');
+    const yearSelect = document.getElementById('yearSelect');
+    
+    if (monthSelect && yearSelect) {
+        const month = parseInt(monthSelect.value);
+        const year = parseInt(yearSelect.value);
+        window.currentSchedule = {};
+    }
 }
+
+// Make functions available globally
+window.autoAssignEngineers = autoAssignEngineers;
+window.saveSchedule = saveSchedule;
+window.clearAllShifts = clearAllShifts;

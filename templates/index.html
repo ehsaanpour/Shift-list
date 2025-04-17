@@ -97,6 +97,9 @@
                 </div>
             </div>
             <div class="card-footer text-end">
+                <button id="btnClearShifts" class="btn btn-danger me-2">
+                    <i class="fas fa-eraser me-1"></i> Clear All Shifts
+                </button>
                 <button id="btnAutoAssign" class="btn btn-warning me-2">
                     <i class="fas fa-magic me-1"></i> Auto-Assign Engineers
                 </button>
@@ -181,6 +184,30 @@
         </div>
     </div>
 </div>
+
+<!-- Limitations Modal -->
+<div class="modal fade" id="limitationsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="fas fa-clock me-2"></i>Set Shift Limitations</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Select days and shifts when the engineer is <strong>not available</strong> to work:</p>
+                <div id="limitationsContent">
+                    <!-- Limitations table will be generated here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnSaveLimitations">
+                    <i class="fas fa-save me-1"></i> Save Limitations
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -189,6 +216,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Global variables
     let engineers = [];
     let currentSchedule = {};
+    let currentEngineerForLimitations = null;
     
     // Initialize current date
     const currentDate = new Date();
@@ -219,7 +247,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('btnGenerate').addEventListener('click', generateExcel);
     document.getElementById('monthSelect').addEventListener('change', generateCalendars);
     document.getElementById('yearSelect').addEventListener('change', generateCalendars);
-    document.getElementById('btnAutoAssign').addEventListener('click', autoAssignEngineers);
+    document.getElementById('btnSaveLimitations').addEventListener('click', saveLimitations);
     
     // Functions
     function loadEngineers() {
@@ -266,12 +294,19 @@ document.addEventListener('DOMContentLoaded', function() {
             editBtn.innerHTML = '<i class="fas fa-edit"></i>';
             editBtn.addEventListener('click', () => editEngineer(eng));
             
+            const limitBtn = document.createElement('button');
+            limitBtn.classList.add('btn', 'btn-sm', 'btn-outline-warning', 'me-1');
+            limitBtn.innerHTML = '<i class="fas fa-clock"></i>';
+            limitBtn.title = 'Set shift limitations';
+            limitBtn.addEventListener('click', () => showLimitationsModal(eng));
+            
             const deleteBtn = document.createElement('button');
             deleteBtn.classList.add('btn', 'btn-sm', 'btn-outline-danger');
             deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
             deleteBtn.addEventListener('click', () => deleteEngineer(eng.name));
             
             actions.appendChild(editBtn);
+            actions.appendChild(limitBtn);
             actions.appendChild(deleteBtn);
             
             nameRow.appendChild(name);
@@ -281,8 +316,23 @@ document.addEventListener('DOMContentLoaded', function() {
             workplaces.classList.add('text-muted');
             workplaces.textContent = `Workplaces: ${eng.workplaces.join(', ')}`;
             
-            cardBody.appendChild(nameRow);
-            cardBody.appendChild(workplaces);
+            // Add limitations info if any
+            const limitCount = eng.limitations ? Object.keys(eng.limitations).reduce((count, day) => {
+                return count + eng.limitations[day].length;
+            }, 0) : 0;
+            
+            if (limitCount > 0) {
+                const limitations = document.createElement('small');
+                limitations.classList.add('text-danger', 'd-block', 'mt-1');
+                limitations.innerHTML = `<i class="fas fa-exclamation-circle me-1"></i>Has ${limitCount} shift limitations`;
+            
+                cardBody.appendChild(nameRow);
+                cardBody.appendChild(workplaces);
+                cardBody.appendChild(limitations);
+            } else {
+                cardBody.appendChild(nameRow);
+                cardBody.appendChild(workplaces);
+            }
             
             card.appendChild(cardBody);
             engineersList.appendChild(card);
@@ -328,6 +378,13 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
+        // Find existing engineer to preserve limitations
+        let existingLimitations = {};
+        const existingEngineer = engineers.find(eng => eng.name === name);
+        if (existingEngineer && existingEngineer.limitations) {
+            existingLimitations = existingEngineer.limitations;
+        }
+        
         fetch('/api/engineers', {
             method: 'POST',
             headers: {
@@ -335,7 +392,8 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: JSON.stringify({
                 name,
-                workplaces
+                workplaces,
+                limitations: existingLimitations
             })
         })
         .then(response => response.json())
@@ -596,10 +654,171 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    function autoAssignEngineers() {
-        // Implementation of auto-assigning engineers
-        alert('Auto-assigning engineers');
+    function showLimitationsModal(engineer) {
+        currentEngineerForLimitations = engineer;
+        
+        // Debug the current limitations
+        console.log('Engineer limitations before editing:', JSON.stringify(engineer.limitations || {}));
+        
+        // Get current month and year
+        const month = parseInt(document.getElementById('monthSelect').value);
+        const year = parseInt(document.getElementById('yearSelect').value);
+        
+        // Get days in month
+        const daysInMonth = new Date(year, month, 0).getDate();
+        
+        // Create the limitations table
+        const limitationsTable = document.createElement('table');
+        limitationsTable.className = 'table table-bordered';
+        
+        // Create header row
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        
+        // Day header
+        const dayHeader = document.createElement('th');
+        dayHeader.textContent = 'Day';
+        headerRow.appendChild(dayHeader);
+        
+        // Shift headers
+        for (let i = 1; i <= 3; i++) {
+            const shiftHeader = document.createElement('th');
+            shiftHeader.textContent = `Shift ${i}`;
+            headerRow.appendChild(shiftHeader);
+        }
+        
+        thead.appendChild(headerRow);
+        limitationsTable.appendChild(thead);
+        
+        // Create table body
+        const tbody = document.createElement('tbody');
+        
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(year, month - 1, day);
+            const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+            const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+            
+            const row = document.createElement('tr');
+            if (isWeekend) {
+                row.classList.add('table-light');
+            }
+            
+            // Day cell
+            const dayCell = document.createElement('td');
+            dayCell.textContent = `${day} - ${date.toLocaleDateString('en-US', { weekday: 'short' })}`;
+            row.appendChild(dayCell);
+            
+            // Shift checkboxes
+            for (let shift = 1; shift <= 3; shift++) {
+                const cell = document.createElement('td');
+                const checkboxId = `limit-day${day}-shift${shift}`;
+                
+                const checkboxWrapper = document.createElement('div');
+                checkboxWrapper.className = 'form-check';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input limitation-checkbox';
+                checkbox.id = checkboxId;
+                checkbox.dataset.day = day;
+                checkbox.dataset.shift = `shift${shift}`;
+                
+                // Check if this day/shift combination is in the limitations
+                if (engineer.limitations && 
+                    (engineer.limitations[`${day}`] || engineer.limitations[day]) && 
+                    (engineer.limitations[`${day}`]?.includes(`shift${shift}`) || 
+                     engineer.limitations[day]?.includes(`shift${shift}`))) {
+                    checkbox.checked = true;
+                }
+                
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.htmlFor = checkboxId;
+                label.textContent = 'Not Available';
+                
+                checkboxWrapper.appendChild(checkbox);
+                checkboxWrapper.appendChild(label);
+                cell.appendChild(checkboxWrapper);
+                row.appendChild(cell);
+            }
+            
+            tbody.appendChild(row);
+        }
+        
+        limitationsTable.appendChild(tbody);
+        
+        // Add to the modal
+        const limitationsContent = document.getElementById('limitationsContent');
+        limitationsContent.innerHTML = '';
+        limitationsContent.appendChild(limitationsTable);
+        
+        // Show the modal
+        new bootstrap.Modal(document.getElementById('limitationsModal')).show();
     }
+    
+    function saveLimitations() {
+        if (!currentEngineerForLimitations) return;
+        
+        // Collect all limitations
+        const limitations = {};
+        document.querySelectorAll('.limitation-checkbox:checked').forEach(checkbox => {
+            const day = checkbox.dataset.day;
+            const shift = checkbox.dataset.shift;
+            
+            // Ensure day is stored as string
+            const dayStr = String(day);
+            
+            if (!limitations[dayStr]) {
+                limitations[dayStr] = [];
+            }
+            
+            limitations[dayStr].push(shift);
+        });
+        
+        console.log('Collected limitations:', JSON.stringify(limitations));
+        
+        // Update the engineer's limitations
+        currentEngineerForLimitations.limitations = limitations;
+        
+        // Update the global engineers array
+        const engineerIndex = engineers.findIndex(eng => eng.name === currentEngineerForLimitations.name);
+        if (engineerIndex !== -1) {
+            engineers[engineerIndex].limitations = limitations;
+        }
+        
+        // Save to server
+        fetch('/api/engineers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: currentEngineerForLimitations.name,
+                workplaces: currentEngineerForLimitations.workplaces,
+                limitations: limitations
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Close modal
+                bootstrap.Modal.getInstance(document.getElementById('limitationsModal')).hide();
+                
+                // Reload engineers
+                loadEngineers();
+                
+                // Show success message
+                alert('Limitations saved successfully!');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving limitations:', error);
+            alert('Failed to save limitations. Please try again.');
+        });
+    }
+    
+    // Make saveLimitations function globally available
+    window.saveLimitations = saveLimitations;
 });
 </script>
 {% endblock %}

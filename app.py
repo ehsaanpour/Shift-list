@@ -54,6 +54,7 @@ if not os.path.exists(SCHEDULES_FILE):
 class Engineer(BaseModel):
     name: str
     workplaces: List[str]
+    limitations: Dict[str, List[str]] = {}
 
 class EngineerDelete(BaseModel):
     name: str
@@ -142,13 +143,15 @@ async def add_engineer(engineer: Engineer):
     for eng in engineers:
         if eng['name'] == engineer.name:
             eng['workplaces'] = engineer.workplaces
+            eng['limitations'] = engineer.limitations
             engineer_exists = True
             break
             
     if not engineer_exists:
         engineers.append({
             'name': engineer.name,
-            'workplaces': engineer.workplaces
+            'workplaces': engineer.workplaces,
+            'limitations': engineer.limitations
         })
         
     save_engineers(engineers)
