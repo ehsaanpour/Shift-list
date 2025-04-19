@@ -1,6 +1,6 @@
 {
   "app": "ehsaanpour",
-  "port": 80,
+  "port": 8000,
   "build": {
     "location": "iran"
   },
